@@ -167,7 +167,7 @@ LANGCHAIN_TRACING_V2 = "true"
 
 This project is licensed under the MIT License - see the LICENSE file for details.
 
-## 🙏 Acknowledgments
+## Acknowledgments
 
 - Built with [LangChain](https://langchain.com)
 - Vector embeddings powered by [Pinecone](https://www.pinecone.io)
