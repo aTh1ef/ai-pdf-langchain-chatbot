@@ -1,6 +1,5 @@
 streamlit
 langchain
-pinecone
 pymupdf
 sentence-transformers
 langchain-google-genai
@@ -10,3 +9,4 @@ langchain-core
 langchain-pinecone
 langchain-huggingface
 langchain-text-splitters
+pinecone-client<3.0.0
