@@ -1,0 +1,12 @@
+streamlit
+langchain
+pinecone-client
+pymupdf
+sentence-transformers
+langchain-google-genai
+google-generativeai
+langchain-community
+langchain-core
+langchain-pinecone
+langchain-huggingface
+langchain-text-splitters
