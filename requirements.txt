@@ -1,12 +1,12 @@
 streamlit
-langchain
-pinecone
+langchain==0.1.13
+pinecone-client==2.2.1
+langchain-pinecone==0.0.3
 pymupdf
 sentence-transformers
 langchain-google-genai
 google-generativeai
 langchain-community
 langchain-core
-langchain-pinecone
 langchain-huggingface
 langchain-text-splitters
