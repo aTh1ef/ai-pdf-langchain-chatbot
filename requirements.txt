@@ -1,12 +1,20 @@
+# Core app
 streamlit
+
+# LangChain stack
 langchain==0.1.13
-pinecone-client==2.2.1
-langchain-pinecone==0.0.3
-pymupdf
+langchain-core==0.1.32
+langchain-community==0.0.33
+langchain-huggingface==0.0.6
+langchain-google-genai==0.0.6
+langchain-text-splitters==0.0.1
+
+# Pinecone (new SDK)
+pinecone>=3.0.0
+
+# Embeddings and document parsing
 sentence-transformers
-langchain-google-genai
+pymupdf
+
+# Google GenAI
 google-generativeai
-langchain-community
-langchain-core
-langchain-huggingface
-langchain-text-splitters
