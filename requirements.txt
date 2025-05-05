@@ -1,6 +1,6 @@
 streamlit
 langchain
-pinecone-client
+pinecone
 pymupdf
 sentence-transformers
 langchain-google-genai
