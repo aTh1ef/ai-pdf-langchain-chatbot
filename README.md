@@ -8,7 +8,7 @@ A powerful AI-powered langchain chatbot that allows you to upload PDF documents 
 
 This application enables users to upload PDF documents and engage in natural language conversations about the content of those documents. The system utilizes advanced natural language processing to understand user queries and retrieve relevant information from the processed documents.
 
-🌐 Live Demo
+🌐 Live Demo:
 Try out the live demo of this application at:
 https://ai-pdf-langchain-chatbot-app.streamlit.app/
 
