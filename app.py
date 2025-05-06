@@ -482,3 +482,11 @@ if not st.session_state.document_processed:
         - [Google AI Studio](https://makersuite.google.com/app/apikey)
         - [LangSmith](https://smith.langchain.com) (optional)
         """)
+
+# Footer
+st.markdown("---")
+st.markdown("""
+<div style="text-align: center; opacity: 0.7; font-size: 0.9rem;">
+    Built with ❤️ using <strong>Streamlit</strong>, <strong>LangChain</strong>, <strong>Pinecone</strong>, and <strong>Google Gemini</strong>
+</div>
+""", unsafe_allow_html=True)
