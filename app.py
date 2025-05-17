@@ -15,18 +15,15 @@ from langchain_core.callbacks import StdOutCallbackHandler
 try:
     # Import LangSmith callback handler from the correct location
     from langchain.callbacks.tracers.langchain import LangChainTracer
-
     has_langsmith = True
 except ImportError:
     has_langsmith = False
-
-
     # Fallback if not available
     class LangChainTracer:
         def __init__(self, *args, **kwargs):
             pass
 
-# Updated Pinecone import for older version compatibility
+# Updated Pinecone import for version compatibility
 import pinecone
 from langchain_pinecone import PineconeVectorStore
 import google.generativeai as genai
@@ -42,7 +39,6 @@ logging.basicConfig(
 )
 
 logger = logging.getLogger("pdf_chatbot")
-
 
 # Set up environment variables from Streamlit secrets
 def setup_environment():
@@ -63,19 +59,34 @@ def setup_environment():
     else:
         logger.info("LangSmith tracing not configured")
 
-
 # Initialize environment
 setup_environment()
 
-# Initialize Pinecone with legacy v2 approach
-pinecone.init(
-    api_key=os.environ["PINECONE_API_KEY"],
-    environment=os.environ.get("PINECONE_ENVIRONMENT", "gcp-starter")
-)
+# Initialize Pinecone with version detection
+# NEW: Version-aware Pinecone initialization
+try:
+    pinecone_version = pinecone.__version__.split('.')[0]
+    logger.info(f"Detected Pinecone SDK version: {pinecone.__version__}")
+    
+    if int(pinecone_version) >= 4:
+        # Pinecone v4+ initialization
+        pc = pinecone.Pinecone(api_key=os.environ["PINECONE_API_KEY"])
+        logger.info("Initialized Pinecone v4+ client")
+    else:
+        # Legacy v2-v3 initialization
+        pinecone.init(
+            api_key=os.environ["PINECONE_API_KEY"],
+            environment=os.environ.get("PINECONE_ENVIRONMENT", "gcp-starter")
+        )
+        pc = pinecone  # For compatibility with the rest of the code
+        logger.info("Initialized Pinecone v2-v3 client")
+except Exception as e:
+    logger.error(f"Error initializing Pinecone: {str(e)}")
+    st.error(f"Error initializing Pinecone: {str(e)}")
+    pc = None  # Will be checked later
 
 # Initialize Gemini
 genai.configure(api_key=os.environ["GOOGLE_API_KEY"])
-
 
 class PDFChatbot:
     def __init__(self):
@@ -84,6 +95,9 @@ class PDFChatbot:
         # Initialize components first
         self.embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
         self.index_name = "pdf-chatbot"
+        
+        # Store Pinecone client reference for use throughout the class
+        self.pc = pc
 
         # Initialize callbacks list - use proper handlers
         callbacks = None  # Initially set to None
@@ -117,20 +131,8 @@ class PDFChatbot:
                 self.llm = ChatGoogleGenerativeAI(model="models/gemini-pro")
                 logger.info("Trying legacy model name format: models/gemini-pro")
 
-        # Check if Pinecone index exists, create if not
-        try:
-            index_list = pinecone.list_indexes()
-            if self.index_name not in index_list:
-                logger.info(f"Creating new Pinecone index: {self.index_name}")
-                pinecone.create_index(
-                    name=self.index_name,
-                    dimension=384,  # Dimension for all-MiniLM-L6-v2
-                    metric="cosine"
-                )
-            logger.info(f"Using existing Pinecone index: {self.index_name}")
-        except Exception as e:
-            logger.error(f"Error with Pinecone index setup: {e}")
-            st.error(f"Error with Pinecone index setup: {e}")
+        # Check if Pinecone index exists, create if not - with version compatibility
+        self._setup_pinecone_index()
 
         # Initialize conversation memory - updated to address deprecation warning
         self.memory = ConversationBufferMemory(
@@ -143,6 +145,50 @@ class PDFChatbot:
         self.callbacks = callbacks
 
         logger.info("PDF Chatbot initialization complete")
+
+    def _setup_pinecone_index(self):
+        """Set up Pinecone index with version compatibility"""
+        if self.pc is None:
+            logger.error("Pinecone client not initialized")
+            st.error("Pinecone client not initialized")
+            return
+            
+        try:
+            pinecone_version = pinecone.__version__.split('.')[0]
+            
+            if int(pinecone_version) >= 4:
+                # Pinecone v4+ approach
+                index_names = [idx["name"] for idx in self.pc.list_indexes()]
+                if self.index_name not in index_names:
+                    logger.info(f"Creating new Pinecone index: {self.index_name}")
+                    try:
+                        self.pc.create_index(
+                            name=self.index_name,
+                            dimension=384,  # Dimension for all-MiniLM-L6-v2
+                            metric="cosine"
+                        )
+                        logger.info(f"Created new Pinecone index: {self.index_name}")
+                    except Exception as e:
+                        logger.error(f"Failed to create Pinecone index: {str(e)}")
+                        st.error(f"Failed to create Pinecone index: {str(e)}")
+                else:
+                    logger.info(f"Using existing Pinecone index: {self.index_name}")
+            else:
+                # Legacy v2-v3 approach
+                index_list = self.pc.list_indexes()
+                if self.index_name not in index_list:
+                    logger.info(f"Creating new Pinecone index: {self.index_name}")
+                    self.pc.create_index(
+                        name=self.index_name,
+                        dimension=384,  # Dimension for all-MiniLM-L6-v2
+                        metric="cosine"
+                    )
+                    logger.info(f"Created new Pinecone index: {self.index_name}")
+                else:
+                    logger.info(f"Using existing Pinecone index: {self.index_name}")
+        except Exception as e:
+            logger.error(f"Error with Pinecone index setup: {e}")
+            st.error(f"Error with Pinecone index setup: {e}")
 
     def extract_text_from_pdf(self, pdf_file):
         """Extract text from uploaded PDF file"""
@@ -192,17 +238,31 @@ class PDFChatbot:
         logger.info(f"Creating embeddings for {len(chunks)} chunks and storing in Pinecone namespace: {namespace}")
 
         try:
-            # Get the index using legacy v2 approach
-            index = pinecone.Index(self.index_name)
+            # Version-aware approach to get the index and delete existing vectors
+            pinecone_version = pinecone.__version__.split('.')[0]
             
-            # Delete any existing vectors in this namespace to avoid conflicts
-            try:
-                index.delete(deleteAll=True, namespace=namespace)
-                logger.info(f"Deleted existing vectors in namespace: {namespace}")
-            except Exception as e:
-                logger.warning(f"No existing vectors to delete or error: {str(e)}")
+            if int(pinecone_version) >= 4:
+                # Pinecone v4+ approach
+                index = self.pc.Index(self.index_name)
                 
-            # Create the vector store with legacy approach
+                # Delete existing vectors in this namespace to avoid conflicts
+                try:
+                    index.delete(namespace=namespace, delete_all=True)
+                    logger.info(f"Deleted existing vectors in namespace: {namespace}")
+                except Exception as e:
+                    logger.warning(f"No existing vectors to delete or error: {str(e)}")
+            else:
+                # Legacy v2-v3 approach
+                index = self.pc.Index(self.index_name)
+                
+                # Delete existing vectors in this namespace to avoid conflicts
+                try:
+                    index.delete(deleteAll=True, namespace=namespace)
+                    logger.info(f"Deleted existing vectors in namespace: {namespace}")
+                except Exception as e:
+                    logger.warning(f"No existing vectors to delete or error: {str(e)}")
+                
+            # Create the vector store with LangChain - compatible with both v3 and v4
             vectorstore = PineconeVectorStore.from_documents(
                 documents=chunks,
                 embedding=self.embeddings,
@@ -214,7 +274,25 @@ class PDFChatbot:
         except Exception as e:
             logger.error(f"Error creating embeddings: {str(e)}")
             st.error(f"Error creating embeddings: {str(e)}")
-            raise e
+            
+            # More detailed error reporting for debugging
+            logger.error(f"Error type: {type(e)}")
+            logger.error(f"Error details: {str(e)}")
+            
+            # Try alternative approach for storing embeddings
+            try:
+                logger.info("Attempting alternative approach for storing embeddings...")
+                vectorstore = PineconeVectorStore.from_documents(
+                    documents=chunks,
+                    embedding=self.embeddings,
+                    index=index,  # Pass the index directly
+                    namespace=namespace
+                )
+                logger.info("Alternative approach successful")
+                return vectorstore
+            except Exception as e2:
+                logger.error(f"Alternative approach also failed: {str(e2)}")
+                raise e2
 
     def get_conversational_chain(self, vectorstore):
         """Create a conversational chain for Q&A"""
@@ -237,7 +315,14 @@ class PDFChatbot:
         """Process a user query and return a response"""
         logger.info(f"Processing query: {query}")
 
-        result = chain({"question": query})
+        # Use the invoke method for newer LangChain versions
+        try:
+            result = chain.invoke({"question": query})
+            logger.info("Used chain.invoke() successfully")
+        except AttributeError:
+            # Fallback to call method for older LangChain versions
+            result = chain({"question": query})
+            logger.info("Used chain() call successfully")
 
         logger.info(f"Retrieved {len(result['source_documents'])} source documents")
         logger.info(f"Generated answer (first 100 chars): {result['answer'][:100]}...")
@@ -256,6 +341,7 @@ if "chatbot" not in st.session_state:
     try:
         st.session_state.chatbot = PDFChatbot()
     except Exception as e:
+        logger.error(f"Error initializing chatbot: {str(e)}")
         st.error(f"Error initializing chatbot: {str(e)}")
         st.session_state.chatbot = None
 
@@ -415,7 +501,15 @@ RecursiveCharacterTextSplitter(
         st.subheader("Pinecone Configuration")
         try:
             if st.session_state.chatbot:
-                indexes = pinecone.list_indexes()
+                pinecone_version = pinecone.__version__.split('.')[0]
+                
+                if int(pinecone_version) >= 4:
+                    # Pinecone v4+ approach
+                    indexes = [idx["name"] for idx in pc.list_indexes()]
+                else:
+                    # Legacy v2-v3 approach
+                    indexes = pinecone.list_indexes()
+                
                 st.write("Available Indexes:", indexes)
                 st.write("Current Index:", st.session_state.chatbot.index_name)
                 st.write("Environment:", os.environ.get("PINECONE_ENVIRONMENT", "gcp-starter"))
