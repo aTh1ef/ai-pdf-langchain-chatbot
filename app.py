@@ -5,7 +5,6 @@ import tempfile
 import logging
 from langchain_community.document_loaders import PyMuPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_pinecone import PineconeVectorStore
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain.chains import ConversationalRetrievalChain
 from langchain.memory import ConversationBufferMemory
@@ -27,8 +26,9 @@ except ImportError:
         def __init__(self, *args, **kwargs):
             pass
 
-# Updated Pinecone import
-from pinecone import Pinecone
+# Updated Pinecone import for older version compatibility
+import pinecone
+from langchain_pinecone import PineconeVectorStore
 import google.generativeai as genai
 
 # Set up logging
@@ -49,9 +49,10 @@ def setup_environment():
     # Set required API keys
     os.environ["PINECONE_API_KEY"] = st.secrets["PINECONE_API_KEY"]
     os.environ["GOOGLE_API_KEY"] = st.secrets["GOOGLE_API_KEY"]
-
-    # No need to set PINECONE_HOST as environment variable
-    # It will be accessed directly from st.secrets when needed
+    
+    # Set Pinecone environment for v2 compatibility
+    if "PINECONE_ENVIRONMENT" in st.secrets:
+        os.environ["PINECONE_ENVIRONMENT"] = st.secrets["PINECONE_ENVIRONMENT"]
 
     # Set LangSmith variables if they exist in secrets
     if "LANGCHAIN_API_KEY" in st.secrets:
@@ -66,8 +67,11 @@ def setup_environment():
 # Initialize environment
 setup_environment()
 
-# Initialize Pinecone with new SDK approach
-pc = Pinecone(api_key=os.environ["PINECONE_API_KEY"])
+# Initialize Pinecone with legacy v2 approach
+pinecone.init(
+    api_key=os.environ["PINECONE_API_KEY"],
+    environment=os.environ.get("PINECONE_ENVIRONMENT", "gcp-starter")
+)
 
 # Initialize Gemini
 genai.configure(api_key=os.environ["GOOGLE_API_KEY"])
@@ -80,11 +84,6 @@ class PDFChatbot:
         # Initialize components first
         self.embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
         self.index_name = "pdf-chatbot"
-
-        # Get Pinecone host from secrets instead of hardcoding
-        self.pinecone_host = st.secrets.get("PINECONE_HOST", "")
-        if not self.pinecone_host:
-            logger.warning("PINECONE_HOST not found in secrets. Vector operations may fail.")
 
         # Initialize callbacks list - use proper handlers
         callbacks = None  # Initially set to None
@@ -118,11 +117,20 @@ class PDFChatbot:
                 self.llm = ChatGoogleGenerativeAI(model="models/gemini-pro")
                 logger.info("Trying legacy model name format: models/gemini-pro")
 
-        # Store Pinecone client reference
-        self.pc = pc
-
-        # No need to create index since we've already created it manually
-        logger.info(f"Using existing Pinecone index: {self.index_name}")
+        # Check if Pinecone index exists, create if not
+        try:
+            index_list = pinecone.list_indexes()
+            if self.index_name not in index_list:
+                logger.info(f"Creating new Pinecone index: {self.index_name}")
+                pinecone.create_index(
+                    name=self.index_name,
+                    dimension=384,  # Dimension for all-MiniLM-L6-v2
+                    metric="cosine"
+                )
+            logger.info(f"Using existing Pinecone index: {self.index_name}")
+        except Exception as e:
+            logger.error(f"Error with Pinecone index setup: {e}")
+            st.error(f"Error with Pinecone index setup: {e}")
 
         # Initialize conversation memory - updated to address deprecation warning
         self.memory = ConversationBufferMemory(
@@ -184,7 +192,17 @@ class PDFChatbot:
         logger.info(f"Creating embeddings for {len(chunks)} chunks and storing in Pinecone namespace: {namespace}")
 
         try:
-            # First attempt with simplified API - no client parameter
+            # Get the index using legacy v2 approach
+            index = pinecone.Index(self.index_name)
+            
+            # Delete any existing vectors in this namespace to avoid conflicts
+            try:
+                index.delete(deleteAll=True, namespace=namespace)
+                logger.info(f"Deleted existing vectors in namespace: {namespace}")
+            except Exception as e:
+                logger.warning(f"No existing vectors to delete or error: {str(e)}")
+                
+            # Create the vector store with legacy approach
             vectorstore = PineconeVectorStore.from_documents(
                 documents=chunks,
                 embedding=self.embeddings,
@@ -194,22 +212,9 @@ class PDFChatbot:
             logger.info("Embeddings created and stored successfully")
             return vectorstore
         except Exception as e:
-            logger.error(f"Error with standard approach: {str(e)}")
-
-            # Alternative approach: get the index and pass it directly
-            try:
-                index = self.pc.Index(self.index_name)
-                vectorstore = PineconeVectorStore.from_documents(
-                    documents=chunks,
-                    embedding=self.embeddings,
-                    index=index,  # Use the index directly
-                    namespace=namespace
-                )
-                logger.info("Embeddings created and stored successfully using alternative approach")
-                return vectorstore
-            except Exception as e2:
-                logger.error(f"Error with alternative approach: {str(e2)}")
-                raise e2
+            logger.error(f"Error creating embeddings: {str(e)}")
+            st.error(f"Error creating embeddings: {str(e)}")
+            raise e
 
     def get_conversational_chain(self, vectorstore):
         """Create a conversational chain for Q&A"""
@@ -410,10 +415,12 @@ RecursiveCharacterTextSplitter(
         st.subheader("Pinecone Configuration")
         try:
             if st.session_state.chatbot:
-                indexes = st.session_state.chatbot.pc.list_indexes().names()
+                indexes = pinecone.list_indexes()
                 st.write("Available Indexes:", indexes)
                 st.write("Current Index:", st.session_state.chatbot.index_name)
-                st.write("Host:", st.session_state.chatbot.pinecone_host)
+                st.write("Environment:", os.environ.get("PINECONE_ENVIRONMENT", "gcp-starter"))
+                # Get pinecone client version
+                st.write("Pinecone Client Version:", pinecone.__version__)
         except Exception as e:
             st.error(f"Error fetching Pinecone indexes: {str(e)}")
 
@@ -425,7 +432,7 @@ RecursiveCharacterTextSplitter(
         - Metric: Cosine
         - Cloud Provider: AWS
         - Region: us-east-1
-        - Capacity mode: Serverless
+        - Environment: gcp-starter (default)
         """)
 
     with debug_tabs[1]:
@@ -468,8 +475,8 @@ if not st.session_state.document_processed:
         PINECONE_API_KEY = "your-pinecone-api-key"
         GOOGLE_API_KEY = "your-google-api-key"
 
-        # Your Pinecone host URL (find this in your Pinecone console)
-        PINECONE_HOST = "your-index-name-xxxx.svc.region.pinecone.io"
+        # Required for Pinecone client v2.x.x
+        PINECONE_ENVIRONMENT = "gcp-starter"  # Or your specific environment
 
         # Optional LangSmith configuration (for advanced monitoring)
         LANGCHAIN_API_KEY = "your-langsmith-api-key"
@@ -478,7 +485,7 @@ if not st.session_state.document_processed:
         ```
 
         You can get your API keys from:
-        - [Pinecone Console](https://app.pinecone.io) (both API key and host URL)
+        - [Pinecone Console](https://app.pinecone.io) (both API key and environment)
         - [Google AI Studio](https://makersuite.google.com/app/apikey)
         - [LangSmith](https://smith.langchain.com) (optional)
         """)
