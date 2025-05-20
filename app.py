@@ -25,7 +25,21 @@ except ImportError:
 
 # Updated Pinecone import for version compatibility
 import pinecone
-from langchain_pinecone import PineconeVectorStore
+# Import based on version compatibility
+try:
+    # Try the legacy import first (pinecone-client v2.x.x)
+    from langchain.vectorstores import Pinecone as PineconeVectorStore
+    USING_LEGACY_PINECONE = True
+    logger.info("Using legacy Pinecone vectorstore integration from langchain package")
+except ImportError:
+    # Fall back to newer package if available
+    try:
+        from langchain_pinecone import PineconeVectorStore
+        USING_LEGACY_PINECONE = False
+        logger.info("Using new langchain_pinecone integration")
+    except ImportError:
+        logger.error("Failed to import PineconeVectorStore from either package")
+        st.error("Failed to import PineconeVectorStore. Please check your installation.")
 import google.generativeai as genai
 
 # Set up logging
@@ -287,12 +301,22 @@ class PDFChatbot:
                     logger.warning(f"No existing vectors to delete or error: {str(e)}")
                 
             # Create the vector store with LangChain - compatible with both v3 and v4
-            vectorstore = PineconeVectorStore.from_documents(
-                documents=chunks,
-                embedding=self.embeddings,
-                index_name=self.index_name,
-                namespace=namespace
-            )
+            if USING_LEGACY_PINECONE:
+                # Using legacy Pinecone vectorstore from langchain
+                vectorstore = PineconeVectorStore.from_documents(
+                    documents=chunks,
+                    embedding=self.embeddings,
+                    index_name=self.index_name,
+                    namespace=namespace
+                )
+            else:
+                # Using newer langchain_pinecone package
+                vectorstore = PineconeVectorStore.from_documents(
+                    documents=chunks,
+                    embedding=self.embeddings,
+                    index_name=self.index_name,
+                    namespace=namespace
+                )
             logger.info("Embeddings created and stored successfully")
             return vectorstore
         except Exception as e:
