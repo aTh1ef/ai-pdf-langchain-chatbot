@@ -93,7 +93,28 @@ class PDFChatbot:
         logger.info("Initializing PDF Chatbot")
 
         # Initialize components first
-        self.embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+        # FIX: Modified HuggingFaceEmbeddings initialization to handle meta tensor issue
+        try:
+            logger.info("Initializing embeddings with model_kwargs")
+            self.embeddings = HuggingFaceEmbeddings(
+                model_name="sentence-transformers/all-MiniLM-L6-v2",
+                model_kwargs={"device": "cpu"}  # Force CPU usage to avoid meta tensor issues
+            )
+        except Exception as e:
+            logger.warning(f"Failed with model_kwargs approach: {e}")
+            try:
+                # Alternative initialization
+                import torch
+                logger.info("Trying alternative approach with torch settings")
+                torch.set_grad_enabled(False)  # Disable gradients
+                self.embeddings = HuggingFaceEmbeddings(
+                    model_name="sentence-transformers/all-MiniLM-L6-v2",
+                )
+            except Exception as e2:
+                logger.error(f"Both embedding initialization methods failed: {e2}")
+                st.error(f"Could not initialize embeddings: {e2}")
+                raise e2
+        
         self.index_name = "pdf-chatbot"
         
         # Store Pinecone client reference for use throughout the class
@@ -339,10 +360,46 @@ st.write("Upload a PDF and chat with it!")
 if "chatbot" not in st.session_state:
     # Use try/except to handle possible runtime errors during initialization
     try:
+        # FIX: Add checks for PyTorch and transformers versions
+        import importlib
+        from importlib.metadata import version
+
+        # Log versions for debugging
+        try:
+            torch_version = version('torch')
+            transformers_version = version('transformers')
+            sentence_transformers_version = version('sentence-transformers')
+            st.sidebar.text(f"PyTorch: {torch_version}")
+            st.sidebar.text(f"Transformers: {transformers_version}")
+            st.sidebar.text(f"Sentence-Transformers: {sentence_transformers_version}")
+            logger.info(f"Running with PyTorch {torch_version}, Transformers {transformers_version}, Sentence-Transformers {sentence_transformers_version}")
+        except Exception as e:
+            logger.warning(f"Could not get library versions: {e}")
+        
         st.session_state.chatbot = PDFChatbot()
     except Exception as e:
         logger.error(f"Error initializing chatbot: {str(e)}")
         st.error(f"Error initializing chatbot: {str(e)}")
+        
+        # FIX: Add more detailed error information and potential solution
+        import traceback
+        error_details = traceback.format_exc()
+        logger.error(f"Full error traceback: {error_details}")
+        
+        # Display user-friendly error message with potential solution
+        st.error("""
+        There was an error initializing the chatbot. This might be due to compatibility issues with PyTorch and HuggingFace libraries.
+        
+        Potential solutions:
+        1. Try adding these dependencies to your requirements.txt:
+           ```
+           torch>=2.0.0
+           sentence-transformers>=2.2.2
+           transformers>=4.30.0
+           ```
+        2. Or try running: `pip install -U torch sentence-transformers transformers`
+        """)
+        
         st.session_state.chatbot = None
 
 if "conversation" not in st.session_state:
@@ -362,6 +419,23 @@ with left_col:
 
     # Add a debug mode toggle
     debug_mode = st.toggle("Debug Mode", value=False)
+
+    # FIX: Add environment information for debugging
+    if debug_mode:
+        st.subheader("Environment Info")
+        import platform
+        import sys
+        st.text(f"Python: {platform.python_version()}")
+        st.text(f"System: {platform.system()} {platform.release()}")
+        
+        try:
+            import torch
+            st.text(f"PyTorch: {torch.__version__}")
+            st.text(f"CUDA Available: {torch.cuda.is_available()}")
+            if torch.cuda.is_available():
+                st.text(f"CUDA Version: {torch.version.cuda}")
+        except:
+            st.text("PyTorch: Not available")
 
     if "LANGCHAIN_API_KEY" in st.secrets:
         langsmith_url = "https://smith.langchain.com/projects/" + st.secrets.get("LANGCHAIN_PROJECT", "pdf-chatbot")
@@ -484,7 +558,7 @@ RecursiveCharacterTextSplitter(
         """)
 
         st.subheader("Embedding Model")
-        st.code("HuggingFaceEmbeddings(model_name='sentence-transformers/all-MiniLM-L6-v2')")
+        st.code("HuggingFaceEmbeddings(model_name='sentence-transformers/all-MiniLM-L6-v2', model_kwargs={'device': 'cpu'})")
 
         st.subheader("Vector Store")
         st.code(
