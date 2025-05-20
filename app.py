@@ -1,6 +1,10 @@
 # app.py
 import os
 import streamlit as st
+
+# Set page config must be the first Streamlit command
+st.set_page_config(page_title="AI PDF Chatbot", layout="wide")
+
 import tempfile
 import logging
 from langchain_community.document_loaders import PyMuPDFLoader
@@ -10,18 +14,6 @@ from langchain.chains import ConversationalRetrievalChain
 from langchain.memory import ConversationBufferMemory
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.callbacks import StdOutCallbackHandler
-
-# Set up logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler("langchain_processes.log"),
-        logging.StreamHandler()
-    ]
-)
-
-logger = logging.getLogger("pdf_chatbot")
 
 # Fix for LangSmithTracer import error
 try:
@@ -37,22 +29,20 @@ except ImportError:
 
 # Updated Pinecone import for version compatibility
 import pinecone
-# Import based on version compatibility
-try:
-    # Try the legacy import first (pinecone-client v2.x.x)
-    from langchain.vectorstores import Pinecone as PineconeVectorStore
-    USING_LEGACY_PINECONE = True
-    logger.info("Using legacy Pinecone vectorstore integration from langchain package")
-except ImportError:
-    # Fall back to newer package if available
-    try:
-        from langchain_pinecone import PineconeVectorStore
-        USING_LEGACY_PINECONE = False
-        logger.info("Using new langchain_pinecone integration")
-    except ImportError:
-        logger.error("Failed to import PineconeVectorStore from either package")
-        st.error("Failed to import PineconeVectorStore. Please check your installation.")
+from langchain_pinecone import PineconeVectorStore
 import google.generativeai as genai
+
+# Set up logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler("langchain_processes.log"),
+        logging.StreamHandler()
+    ]
+)
+
+logger = logging.getLogger("pdf_chatbot")
 
 # Set up environment variables from Streamlit secrets
 def setup_environment():
@@ -106,31 +96,28 @@ class PDFChatbot:
     def __init__(self):
         logger.info("Initializing PDF Chatbot")
 
-        # Fixed: Initialize HuggingFace embeddings with device specification and proper model loading
+        # Initialize components first
+        # FIX: Modified HuggingFaceEmbeddings initialization to handle meta tensor issue
         try:
-            # First attempt: Use CPU explicitly to avoid meta tensor issues
+            logger.info("Initializing embeddings with model_kwargs")
             self.embeddings = HuggingFaceEmbeddings(
                 model_name="sentence-transformers/all-MiniLM-L6-v2",
-                model_kwargs={"device": "cpu"}
+                model_kwargs={"device": "cpu"}  # Force CPU usage to avoid meta tensor issues
             )
-            logger.info("Successfully initialized HuggingFace embeddings with CPU device")
         except Exception as e:
-            logger.warning(f"Error initializing HuggingFace embeddings with CPU: {e}")
-            # Second attempt: Try with default settings but catch the specific error
+            logger.warning(f"Failed with model_kwargs approach: {e}")
             try:
+                # Alternative initialization
                 import torch
-                # Explicitly set the default device to CPU
-                torch.set_default_device("cpu")
+                logger.info("Trying alternative approach with torch settings")
+                torch.set_grad_enabled(False)  # Disable gradients
                 self.embeddings = HuggingFaceEmbeddings(
-                    model_name="sentence-transformers/all-MiniLM-L6-v2"
+                    model_name="sentence-transformers/all-MiniLM-L6-v2",
                 )
-                logger.info("Successfully initialized HuggingFace embeddings with torch default CPU")
             except Exception as e2:
-                logger.error(f"Failed to initialize embeddings with both methods: {e2}")
-                # Use a mock embedding class as fallback if everything fails
-                logger.warning("Using fallback embedding implementation")
-                from langchain_community.embeddings import FakeEmbeddings
-                self.embeddings = FakeEmbeddings(size=384)
+                logger.error(f"Both embedding initialization methods failed: {e2}")
+                st.error(f"Could not initialize embeddings: {e2}")
+                raise e2
         
         self.index_name = "pdf-chatbot"
         
@@ -301,22 +288,12 @@ class PDFChatbot:
                     logger.warning(f"No existing vectors to delete or error: {str(e)}")
                 
             # Create the vector store with LangChain - compatible with both v3 and v4
-            if USING_LEGACY_PINECONE:
-                # Using legacy Pinecone vectorstore from langchain
-                vectorstore = PineconeVectorStore.from_documents(
-                    documents=chunks,
-                    embedding=self.embeddings,
-                    index_name=self.index_name,
-                    namespace=namespace
-                )
-            else:
-                # Using newer langchain_pinecone package
-                vectorstore = PineconeVectorStore.from_documents(
-                    documents=chunks,
-                    embedding=self.embeddings,
-                    index_name=self.index_name,
-                    namespace=namespace
-                )
+            vectorstore = PineconeVectorStore.from_documents(
+                documents=chunks,
+                embedding=self.embeddings,
+                index_name=self.index_name,
+                namespace=namespace
+            )
             logger.info("Embeddings created and stored successfully")
             return vectorstore
         except Exception as e:
@@ -387,10 +364,46 @@ st.write("Upload a PDF and chat with it!")
 if "chatbot" not in st.session_state:
     # Use try/except to handle possible runtime errors during initialization
     try:
+        # FIX: Add checks for PyTorch and transformers versions
+        import importlib
+        from importlib.metadata import version
+
+        # Log versions for debugging
+        try:
+            torch_version = version('torch')
+            transformers_version = version('transformers')
+            sentence_transformers_version = version('sentence-transformers')
+            st.sidebar.text(f"PyTorch: {torch_version}")
+            st.sidebar.text(f"Transformers: {transformers_version}")
+            st.sidebar.text(f"Sentence-Transformers: {sentence_transformers_version}")
+            logger.info(f"Running with PyTorch {torch_version}, Transformers {transformers_version}, Sentence-Transformers {sentence_transformers_version}")
+        except Exception as e:
+            logger.warning(f"Could not get library versions: {e}")
+        
         st.session_state.chatbot = PDFChatbot()
     except Exception as e:
         logger.error(f"Error initializing chatbot: {str(e)}")
         st.error(f"Error initializing chatbot: {str(e)}")
+        
+        # FIX: Add more detailed error information and potential solution
+        import traceback
+        error_details = traceback.format_exc()
+        logger.error(f"Full error traceback: {error_details}")
+        
+        # Display user-friendly error message with potential solution
+        st.error("""
+        There was an error initializing the chatbot. This might be due to compatibility issues with PyTorch and HuggingFace libraries.
+        
+        Potential solutions:
+        1. Try adding these dependencies to your requirements.txt:
+           ```
+           torch>=2.0.0
+           sentence-transformers>=2.2.2
+           transformers>=4.30.0
+           ```
+        2. Or try running: `pip install -U torch sentence-transformers transformers`
+        """)
+        
         st.session_state.chatbot = None
 
 if "conversation" not in st.session_state:
@@ -410,6 +423,23 @@ with left_col:
 
     # Add a debug mode toggle
     debug_mode = st.toggle("Debug Mode", value=False)
+
+    # FIX: Add environment information for debugging
+    if debug_mode:
+        st.subheader("Environment Info")
+        import platform
+        import sys
+        st.text(f"Python: {platform.python_version()}")
+        st.text(f"System: {platform.system()} {platform.release()}")
+        
+        try:
+            import torch
+            st.text(f"PyTorch: {torch.__version__}")
+            st.text(f"CUDA Available: {torch.cuda.is_available()}")
+            if torch.cuda.is_available():
+                st.text(f"CUDA Version: {torch.version.cuda}")
+        except:
+            st.text("PyTorch: Not available")
 
     if "LANGCHAIN_API_KEY" in st.secrets:
         langsmith_url = "https://smith.langchain.com/projects/" + st.secrets.get("LANGCHAIN_PROJECT", "pdf-chatbot")
@@ -548,12 +578,12 @@ RecursiveCharacterTextSplitter(
     with debug_tabs[3]:
         st.subheader("Pinecone Configuration")
         try:
-            if st.session_state.chatbot and st.session_state.chatbot.pc:
+            if st.session_state.chatbot:
                 pinecone_version = pinecone.__version__.split('.')[0]
                 
                 if int(pinecone_version) >= 4:
                     # Pinecone v4+ approach
-                    indexes = [idx["name"] for idx in st.session_state.chatbot.pc.list_indexes()]  # Fixed: Use st.session_state.chatbot.pc instead of pc
+                    indexes = [idx["name"] for idx in pc.list_indexes()]
                 else:
                     # Legacy v2-v3 approach
                     indexes = pinecone.list_indexes()
