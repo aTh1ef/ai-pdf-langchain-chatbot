@@ -10,39 +10,9 @@ from langchain.chains import ConversationalRetrievalChain
 from langchain.memory import ConversationBufferMemory
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.callbacks import StdOutCallbackHandler
-
-# Fix for LangSmithTracer import error
-try:
-    # Import LangSmith callback handler from the correct location
-    from langchain.callbacks.tracers.langchain import LangChainTracer
-    has_langsmith = True
-except ImportError:
-    has_langsmith = False
-    # Fallback if not available
-    class LangChainTracer:
-        def __init__(self, *args, **kwargs):
-            pass
-
-# Updated Pinecone import for version compatibility
-import pinecone
-# Import based on version compatibility
-try:
-    # Try the legacy import first (pinecone-client v2.x.x)
-    from langchain.vectorstores import Pinecone as PineconeVectorStore
-    USING_LEGACY_PINECONE = True
-    logger.info("Using legacy Pinecone vectorstore integration from langchain package")
-except ImportError:
-    # Fall back to newer package if available
-    try:
-        from langchain_pinecone import PineconeVectorStore
-        USING_LEGACY_PINECONE = False
-        logger.info("Using new langchain_pinecone integration")
-    except ImportError:
-        logger.error("Failed to import PineconeVectorStore from either package")
-        st.error("Failed to import PineconeVectorStore. Please check your installation.")
 import google.generativeai as genai
 
-# Set up logging
+# Set up logging first
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -53,6 +23,21 @@ logging.basicConfig(
 )
 
 logger = logging.getLogger("pdf_chatbot")
+
+# Now handle Pinecone imports
+import pinecone
+try:
+    from langchain_community.vectorstores import Pinecone as PineconeVectorStore
+    USING_LEGACY_PINECONE = False
+    logger.info("Using new langchain_community vectorstore integration")
+except ImportError:
+    try:
+        from langchain.vectorstores import Pinecone as PineconeVectorStore
+        USING_LEGACY_PINECONE = True
+        logger.info("Using legacy Pinecone vectorstore integration from langchain package")
+    except ImportError:
+        logger.error("Failed to import PineconeVectorStore from either package")
+        st.error("Failed to import PineconeVectorStore. Please check your installation.")
 
 # Set up environment variables from Streamlit secrets
 def setup_environment():
