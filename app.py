@@ -11,6 +11,18 @@ from langchain.memory import ConversationBufferMemory
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.callbacks import StdOutCallbackHandler
 
+# Set up logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler("langchain_processes.log"),
+        logging.StreamHandler()
+    ]
+)
+
+logger = logging.getLogger("pdf_chatbot")
+
 # Fix for LangSmithTracer import error
 try:
     # Import LangSmith callback handler from the correct location
@@ -41,18 +53,6 @@ except ImportError:
         logger.error("Failed to import PineconeVectorStore from either package")
         st.error("Failed to import PineconeVectorStore. Please check your installation.")
 import google.generativeai as genai
-
-# Set up logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler("langchain_processes.log"),
-        logging.StreamHandler()
-    ]
-)
-
-logger = logging.getLogger("pdf_chatbot")
 
 # Set up environment variables from Streamlit secrets
 def setup_environment():
@@ -553,7 +553,7 @@ RecursiveCharacterTextSplitter(
                 
                 if int(pinecone_version) >= 4:
                     # Pinecone v4+ approach
-                    indexes = [idx["name"] for idx in pc.list_indexes()]
+                    indexes = [idx["name"] for idx in st.session_state.chatbot.pc.list_indexes()]  # Fixed: Use st.session_state.chatbot.pc instead of pc
                 else:
                     # Legacy v2-v3 approach
                     indexes = pinecone.list_indexes()
