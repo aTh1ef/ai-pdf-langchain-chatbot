@@ -92,8 +92,32 @@ class PDFChatbot:
     def __init__(self):
         logger.info("Initializing PDF Chatbot")
 
-        # Initialize components first
-        self.embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+        # Fixed: Initialize HuggingFace embeddings with device specification and proper model loading
+        try:
+            # First attempt: Use CPU explicitly to avoid meta tensor issues
+            self.embeddings = HuggingFaceEmbeddings(
+                model_name="sentence-transformers/all-MiniLM-L6-v2",
+                model_kwargs={"device": "cpu"}
+            )
+            logger.info("Successfully initialized HuggingFace embeddings with CPU device")
+        except Exception as e:
+            logger.warning(f"Error initializing HuggingFace embeddings with CPU: {e}")
+            # Second attempt: Try with default settings but catch the specific error
+            try:
+                import torch
+                # Explicitly set the default device to CPU
+                torch.set_default_device("cpu")
+                self.embeddings = HuggingFaceEmbeddings(
+                    model_name="sentence-transformers/all-MiniLM-L6-v2"
+                )
+                logger.info("Successfully initialized HuggingFace embeddings with torch default CPU")
+            except Exception as e2:
+                logger.error(f"Failed to initialize embeddings with both methods: {e2}")
+                # Use a mock embedding class as fallback if everything fails
+                logger.warning("Using fallback embedding implementation")
+                from langchain_community.embeddings import FakeEmbeddings
+                self.embeddings = FakeEmbeddings(size=384)
+        
         self.index_name = "pdf-chatbot"
         
         # Store Pinecone client reference for use throughout the class
@@ -484,7 +508,7 @@ RecursiveCharacterTextSplitter(
         """)
 
         st.subheader("Embedding Model")
-        st.code("HuggingFaceEmbeddings(model_name='sentence-transformers/all-MiniLM-L6-v2')")
+        st.code("HuggingFaceEmbeddings(model_name='sentence-transformers/all-MiniLM-L6-v2', model_kwargs={'device': 'cpu'})")
 
         st.subheader("Vector Store")
         st.code(
@@ -500,7 +524,7 @@ RecursiveCharacterTextSplitter(
     with debug_tabs[3]:
         st.subheader("Pinecone Configuration")
         try:
-            if st.session_state.chatbot:
+            if st.session_state.chatbot and st.session_state.chatbot.pc:
                 pinecone_version = pinecone.__version__.split('.')[0]
                 
                 if int(pinecone_version) >= 4:
