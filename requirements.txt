@@ -9,4 +9,4 @@ langchain-core
 langchain-pinecone
 langchain-huggingface
 langchain-text-splitters
-pinecone
+pinecone-client==2.2.4
